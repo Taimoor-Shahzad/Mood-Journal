@@ -20,6 +20,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import MoodChart from './MoodChart';
 import CalendarView from './CalendarView';
 import Quotes from './Quotes';
+import PropTypes from 'prop-types';
 
 const moods = {
   happy: '😄 Happy',
@@ -52,16 +53,22 @@ export default function Journal() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!auth.currentUser) navigate('/auth');
-    
-    const userDoc = doc(db, 'users', auth.currentUser?.uid);
+    if (!auth.currentUser) {
+      navigate('/auth');
+      return;
+    }
+
+    const userDoc = doc(db, 'users', auth.currentUser.uid);
     const unsubscribe = onSnapshot(userDoc, (doc) => {
       setEntries(doc.data()?.moodEntries || []);
     });
-    return unsubscribe;
+    
+    return () => unsubscribe();
   }, [navigate]);
 
   const analyzeSentiment = async (text) => {
+    if (!text.trim()) return null;
+    
     try {
       const response = await fetch(
         "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english",
@@ -74,6 +81,9 @@ export default function Journal() {
           body: JSON.stringify({ inputs: text }),
         }
       );
+
+      if (!response.ok) throw new Error('AI service unavailable');
+      
       const result = await response.json();
       return result[0]?.[0]?.label || 'NEUTRAL';
     } catch (error) {
@@ -84,28 +94,36 @@ export default function Journal() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedMood) return setError('Please select a mood!');
+    setError('');
     
+    if (!selectedMood) {
+      setError('Please select a mood!');
+      return;
+    }
+
     try {
       setLoading(true);
       
-      // Image Upload
       let imageUrl = '';
       if (selectedFile) {
+        if (selectedFile.size > 5 * 1024 * 1024) {
+          throw new Error('Image size must be less than 5MB');
+        }
+
         const storageRef = ref(storage, `uploads/${auth.currentUser.uid}/${Date.now()}`);
         await uploadBytes(storageRef, selectedFile);
         imageUrl = await getDownloadURL(storageRef);
       }
 
-      // AI Analysis
       const sentiment = await analyzeSentiment(entry);
-      const aiFeedback = sentiment ? 
-        sentimentMap[sentiment]?.includes(selectedMood) ? 
-          "Your mood matches the text sentiment 👍" : 
-          "Your mood seems different from the text sentiment 🤔" 
-        : "AI analysis unavailable ⚠️";
+      let aiFeedback = "AI analysis unavailable ⚠️";
+      
+      if (sentiment) {
+        aiFeedback = sentimentMap[sentiment]?.includes(selectedMood) 
+          ? "Your mood matches the text sentiment 👍" 
+          : "Your mood seems different from the text sentiment 🤔";
+      }
 
-      // Save to Firestore
       const userDoc = doc(db, 'users', auth.currentUser.uid);
       await updateDoc(userDoc, {
         moodEntries: [...entries, {
@@ -121,9 +139,8 @@ export default function Journal() {
       setEntry('');
       setSelectedMood('');
       setSelectedFile(null);
-      setError('');
     } catch (err) {
-      setError(err.message);
+      setError(err.message.replace('Firebase: ', ''));
     } finally {
       setLoading(false);
     }
@@ -131,7 +148,7 @@ export default function Journal() {
 
   return (
     <Container maxWidth="md" sx={{ mt: 4 }}>
-      {/* Header with Logout */}
+      {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 4 }}>
         <Typography variant="h4">How are you feeling? 🌤️</Typography>
         <Button 
@@ -143,14 +160,14 @@ export default function Journal() {
         </Button>
       </Box>
 
-      {/* Navigation Bar */}
+      {/* Navigation */}
       <Box sx={{ display: 'flex', gap: 2, mb: 4 }}>
         <Button component={Link} to="/journal" variant="contained">Journal</Button>
-        <Button component={Link} to="/journal/chart" variant="outlined">Mood Chart</Button>
+        <Button component={Link} to="/journal/chart" variant="outlined">Chart</Button>
         <Button component={Link} to="/journal/calendar" variant="outlined">Calendar</Button>
       </Box>
 
-      {/* Nested Routes */}
+      {/* Main Content */}
       <Routes>
         <Route index element={
           <>
@@ -160,6 +177,7 @@ export default function Journal() {
                   key={key}
                   variant={selectedMood === key ? 'contained' : 'outlined'}
                   onClick={() => setSelectedMood(key)}
+                  disabled={loading}
                 >
                   {value}
                 </Button>
@@ -175,12 +193,14 @@ export default function Journal() {
                 value={entry}
                 onChange={(e) => setEntry(e.target.value)}
                 sx={{ mb: 2 }}
+                disabled={loading}
               />
 
               <Button 
                 variant="outlined" 
                 component="label"
                 sx={{ mr: 2 }}
+                disabled={loading}
               >
                 {selectedFile ? "Photo Selected 📷" : "Add Photo"}
                 <input 
@@ -188,6 +208,7 @@ export default function Journal() {
                   hidden 
                   onChange={(e) => setSelectedFile(e.target.files[0])}
                   accept="image/*"
+                  disabled={loading}
                 />
               </Button>
 
@@ -218,27 +239,34 @@ export default function Journal() {
           <CardContent>
             <Box sx={{ display: 'flex', gap: 2, mb: 1 }}>
               <Chip 
-                label={moods[entry.mood]} 
+                label={moods[entry.mood] || 'Unknown Mood'} 
                 color="primary" 
                 variant="outlined" 
               />
               <Typography variant="body2" color="text.secondary">
-                {new Date(entry.date).toLocaleDateString()}
+                {new Date(entry.date).toLocaleDateString(undefined, {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
               </Typography>
             </Box>
 
-            <Typography paragraph>{entry.text}</Typography>
+            <Typography paragraph sx={{ whiteSpace: 'pre-wrap' }}>
+              {entry.text}
+            </Typography>
 
             {entry.imageUrl && (
-              <img 
-                src={entry.imageUrl} 
-                alt="Mood entry visual"
-                style={{ 
-                  maxWidth: '100%', 
-                  height: '200px', 
-                  objectFit: 'cover',
-                  borderRadius: '8px',
-                  marginBottom: '16px'
+              <Box 
+                component="img"
+                src={entry.imageUrl}
+                alt="Journal entry visual"
+                sx={{
+                  maxWidth: '100%',
+                  maxHeight: '300px',
+                  objectFit: 'contain',
+                  borderRadius: 2,
+                  mb: 2
                 }}
               />
             )}
@@ -247,18 +275,20 @@ export default function Journal() {
               {entry.aiAnalysis}
             </Typography>
 
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="subtitle2" gutterBottom>
-                Suggested Activities:
-              </Typography>
-              <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                {entry.recommendations?.map((item, i) => (
-                  <li key={i} style={{ marginBottom: '8px' }}>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </Box>
+            {entry.recommendations?.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Suggested Activities:
+                </Typography>
+                <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                  {entry.recommendations.map((item, i) => (
+                    <li key={i} style={{ marginBottom: '8px' }}>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </Box>
+            )}
           </CardContent>
         </Card>
       ))}
@@ -276,3 +306,16 @@ export default function Journal() {
     </Container>
   );
 }
+
+Journal.propTypes = {
+  entries: PropTypes.arrayOf(
+    PropTypes.shape({
+      mood: PropTypes.string,
+      text: PropTypes.string,
+      date: PropTypes.string,
+      aiAnalysis: PropTypes.string,
+      recommendations: PropTypes.arrayOf(PropTypes.string),
+      imageUrl: PropTypes.string
+    })
+  )
+};

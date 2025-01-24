@@ -7,7 +7,7 @@ import {
   Alert 
 } from '@mui/material';
 import GoogleIcon from '@mui/icons-material/Google';
-import { auth, googleProvider } from '../firebase';
+import { auth, db, googleProvider } from '../firebase'; // Added missing db import
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
@@ -37,7 +37,7 @@ export default function Auth() {
       }
       setError('');
     } catch (err) {
-      setError(err.message);
+      setError(err.message.replace('Firebase: ', '')); // Cleaner error messages
     }
   };
 
@@ -55,7 +55,7 @@ export default function Auth() {
       }
       setError('');
     } catch (err) {
-      setError(err.message);
+      setError(err.message.replace('Firebase: ', '')); // Cleaner error messages
     }
   };
 
@@ -87,6 +87,7 @@ export default function Auth() {
           margin="normal"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          required
         />
         <TextField
           label="Password"
@@ -95,6 +96,8 @@ export default function Auth() {
           margin="normal"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          required
+          inputProps={{ minLength: 6 }}
         />
         <Button
           type="submit"

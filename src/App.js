@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
-import { Container, CircularProgress } from '@mui/material';
+import { Container, CircularProgress, Alert } from '@mui/material';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import Auth from './components/Auth';
@@ -9,13 +9,21 @@ import Journal from './components/Journal';
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setLoading(false);
-    });
-    return unsubscribe;
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (user) => {
+        setUser(user);
+        setLoading(false);
+      },
+      (error) => {
+        setError('Authentication error. Please refresh the page.');
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
   }, []);
 
   if (loading) {
@@ -28,11 +36,28 @@ function App() {
 
   return (
     <Router>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+      
       <Routes>
-        <Route path="/" element={<Navigate to={user ? "/journal" : "/auth"} />} />
-        <Route path="/auth" element={<Auth />} />
-        <Route path="/journal/*" element={<Journal />} />
-        <Route path="*" element={<Navigate to="/" />} />
+        <Route path="/" element={
+          <Navigate to={user ? "/journal/entries" : "/auth"} replace />
+        } />
+
+        <Route path="/auth" element={
+          !user ? <Auth /> : <Navigate to="/journal/entries" replace />
+        } />
+
+        <Route path="/journal/*" element={
+          user ? <Journal /> : <Navigate to="/auth" replace />
+        } />
+
+        <Route path="*" element={
+          <Navigate to="/" replace />
+        } />
       </Routes>
     </Router>
   );
