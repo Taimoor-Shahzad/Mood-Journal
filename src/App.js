@@ -5,6 +5,8 @@ import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import Auth from './components/Auth';
 import Journal from './components/Journal';
+import MoodChart from './components/MoodChart';
+import CalendarView from './components/CalendarView';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -43,18 +45,31 @@ function App() {
       )}
       
       <Routes>
+        {/* Automatic redirect based on auth status */}
         <Route path="/" element={
-          <Navigate to={user ? "/journal/entries" : "/auth"} replace />
+          <Navigate to={user ? "/auth" : "/auth"} replace />
         } />
 
+        {/* Auth route */}
         <Route path="/auth" element={
           !user ? <Auth /> : <Navigate to="/journal/entries" replace />
         } />
 
+        {/* Protected Journal routes */}
         <Route path="/journal/*" element={
           user ? <Journal /> : <Navigate to="/auth" replace />
         } />
 
+        {/* Additional protected routes */}
+        <Route path="/mood-chart" element={
+          user ? <MoodChart /> : <Navigate to="/auth" replace />
+        } />
+
+        <Route path="/calendar" element={
+          user ? <CalendarView /> : <Navigate to="/auth" replace />
+        } />
+
+        {/* Catch-all route */}
         <Route path="*" element={
           <Navigate to="/" replace />
         } />
