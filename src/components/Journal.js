@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { db, auth, storage } from '../firebase';
-import { doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import MoodChart from './MoodChart';
 import CalendarView from './CalendarView';
@@ -58,11 +58,21 @@ export default function Journal() {
       return;
     }
 
+    // Initialize user document reference
     const userDoc = doc(db, 'users', auth.currentUser.uid);
-    const unsubscribe = onSnapshot(userDoc, (doc) => {
-      setEntries(doc.data()?.moodEntries || []);
-    });
     
+    // Set up real-time listener for mood entries
+    const entriesCollection = collection(userDoc, 'moodEntries');
+    const entriesQuery = query(entriesCollection, orderBy('date', 'desc'));
+    
+    const unsubscribe = onSnapshot(entriesQuery, (snapshot) => {
+      const entriesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setEntries(entriesData);
+    });
+
     return () => unsubscribe();
   }, [navigate]);
 
@@ -103,18 +113,26 @@ export default function Journal() {
 
     try {
       setLoading(true);
-      
+      const user = auth.currentUser;
+      if (!user) throw new Error('User not authenticated');
+
+      // Ensure user document exists
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(userDocRef, {}, { merge: true });
+
+      // Handle image upload
       let imageUrl = '';
       if (selectedFile) {
         if (selectedFile.size > 5 * 1024 * 1024) {
           throw new Error('Image size must be less than 5MB');
         }
 
-        const storageRef = ref(storage, `uploads/${auth.currentUser.uid}/${Date.now()}`);
+        const storageRef = ref(storage, `uploads/${user.uid}/${Date.now()}`);
         await uploadBytes(storageRef, selectedFile);
         imageUrl = await getDownloadURL(storageRef);
       }
 
+      // Get sentiment analysis
       const sentiment = await analyzeSentiment(entry);
       let aiFeedback = "AI analysis unavailable ⚠️";
       
@@ -124,21 +142,22 @@ export default function Journal() {
           : "Your mood seems different from the text sentiment 🤔";
       }
 
-      const userDoc = doc(db, 'users', auth.currentUser.uid);
-      await updateDoc(userDoc, {
-        moodEntries: [...entries, {
-          mood: selectedMood,
-          text: entry,
-          date: new Date().toISOString(),
-          aiAnalysis: aiFeedback,
-          recommendations: recommendations[selectedMood],
-          imageUrl
-        }]
+      // Add to mood entries subcollection
+      const entriesCollection = collection(userDocRef, 'moodEntries');
+      await addDoc(entriesCollection, {
+        mood: selectedMood,
+        text: entry,
+        date: new Date().toISOString(),
+        aiAnalysis: aiFeedback,
+        recommendations: recommendations[selectedMood],
+        imageUrl
       });
 
+      // Reset form
       setEntry('');
       setSelectedMood('');
       setSelectedFile(null);
+
     } catch (err) {
       setError(err.message.replace('Firebase: ', ''));
     } finally {
@@ -234,8 +253,8 @@ export default function Journal() {
         Your Entries 📖
       </Typography>
       
-      {entries.slice().reverse().map((entry, index) => (
-        <Card key={index} sx={{ mb: 2 }}>
+      {entries.map((entry) => (
+        <Card key={entry.id} sx={{ mb: 2 }}>
           <CardContent>
             <Box sx={{ display: 'flex', gap: 2, mb: 1 }}>
               <Chip 
@@ -310,9 +329,10 @@ export default function Journal() {
 Journal.propTypes = {
   entries: PropTypes.arrayOf(
     PropTypes.shape({
-      mood: PropTypes.string,
+      id: PropTypes.string.isRequired,
+      mood: PropTypes.string.isRequired,
       text: PropTypes.string,
-      date: PropTypes.string,
+      date: PropTypes.string.isRequired,
       aiAnalysis: PropTypes.string,
       recommendations: PropTypes.arrayOf(PropTypes.string),
       imageUrl: PropTypes.string
